@@ -4,11 +4,11 @@ A Python pipeline converting handwritten notes in PDF format into valid, formatt
 
 Current Version: **0.1.0**
 
-## Features
+## 💬 Features
 
 This pipeline combines `marker-pdf` for layout analysis with Mistral's VLM for superior handwriting recognition. A modular Python architecture orchestrates the process, featuring robust post-processing to ensure valid LaTeX syntax (e.g., `\mathbb{N}`), strict list formatting, and accurate math delimiters.
 
-## Installation
+## 🔎 Installation
 
 1.  **Clone the repository**.
     ```bash
