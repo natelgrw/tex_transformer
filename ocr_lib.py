@@ -1,6 +1,7 @@
 import os
 import io
 import base64
+import re
 from PIL import Image, ImageEnhance, ImageFilter
 from pdf2image import convert_from_path
 
@@ -9,24 +10,42 @@ try:
 except ImportError:
     Mistral = None
 
+import numpy as np
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 def preprocess_image(image):
     """
-    The Enhancer: Prepare image for VLM.
-    - Convert to Grayscale (L)
-    - Apply Sharpening to distinguish characters
+    The Enhancer: Prepare image for VLM using OpenCV.
+    - Convert to Grayscale
+    - Apply Adaptive Thresholding (Illumination Correction)
+    - Denoise
     """
-    # 1. Grayscale
-    image = image.convert('L')
-    
-    # 2. Sharpening
-    # Applying unsharp mask or standard sharpen filter
-    image = image.filter(ImageFilter.SHARPEN)
-    
-    # Optional: Contrast enhancement if needed, but simple sharpening is requested
-    # enhancer = ImageEnhance.Contrast(image)
-    # image = enhancer.enhance(1.5)
-    
-    return image
+    if cv2 is None:
+        # Fallback if cv2 missing
+        return image.convert('L').filter(ImageFilter.SHARPEN)
+
+    img_np = np.array(image)
+    if len(img_np.shape) == 3:
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img_np
+
+    # 1. Denoising
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # 2. Illumination Correction / Adaptive Thresholding
+    thresh = cv2.adaptiveThreshold(
+        blurred, 
+        255, 
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 
+        15, 
+        10
+    )
+    return Image.fromarray(thresh)
 
 def pdf_to_processed_images(pdf_path, dpi=300):
     """
@@ -65,27 +84,37 @@ def run_vision_ocr(pdf_path, api_key=None):
     full_transcript = []
     
     # System Instruction for the VLM
-    # Note: Mistral chat models take 'system' role or just instruction in user prompt.
-    # We will prepend it to the user message for clarity or use system role if supported well.
     system_prompt = (
-        "Transcribe this handwritten math homework. "
-        "Strictly follow this format:\n"
-        "- Use '# Problem X' for detected problems.\n"
-        "- Use '## a)', '## b)' for detected problem parts. CRITICAL: The content MUST start on a separate line below the header. (e.g. '## a)\\nProof...').\n"
-        "- Use '### i)', '### ii)' for detected subparts. CRITICAL: The content MUST start on a separate line below the header.\n"
-        "- STRICTLY convert ALL unicode/handwritten math symbols into valid LaTeX commands (e.g. convert 'ℕ' to '\\mathbb{N}', '∈' to '\\in', '≤' to '\\leq'). NEVER output raw unicode math characters.\n"
-        "- BULLET POINTS: Transcribe the EXACT symbol seen in the image (e.g. '>', '->', '*'). Do NOT normalize it to '-'. If you see an arrowhead '>', output '> '.\n"
-        "- SPACING: You MUST insert TWO (2) empty lines between every single bullet point item.\n"
-        "- If NO bullet points are visible, do NOT hallucinate them. Just write the text normally.\n"
-        "- Wrap all mathematical expressions in LaTeX $ or $$ delimiters.\n"
-        "- Do NOT use markdown code fences (```). Output raw markdown.\n\n"
-        "EXAMPLE:\n"
-        "Input Image shows:\n"
-        "> First step\n"
-        "> Second step\n\n"
-        "Your Output MUST be:\n"
-        "> First step\n\n\n"
-        "> Second step"
+        "Transcribe this handwritten math homework into Markdown.\n"
+        "STRICTLY FOLLOW this structure and these rules:\n\n"
+        "1. **Structure Hierarchy**:\n"
+        "   - Use '# Problem X' for main problems.\n"
+        "   - Use '## a)', '## b)' for parts.\n"
+        "   - Use '### i)', '### ii)' for subparts.\n"
+        "   - DO NOT hallucinate headers (like '## Proof 7') unless clearly written.\n\n"
+        "2. **Math Formatting (CRITICAL)**:\n"
+        "   - ALL math MUST be in LaTeX delimiters: $...$ for inline, $$...$$ for display.\n"
+        "   - NEVER output raw Unicode math symbols (e.g. use '\\mathbb{N}' NOT 'ℕ').\n\n"
+        "3. **Bullet Points**:\n"
+        "   - Use '> ' for bullet points (representing handwritten arrows/bullets).\n"
+        "   - Leave 2 blank lines between bullet items.\n\n"
+        "4. **Visual Recognition Rules (CRITICAL)**:\n"
+        "   - **Subscripts**: $a_n$ is extremely common. Transcribe as $a_n$. (Avoid $an$ unless it is very clearly on the same baseline as 'a').\n"
+        "   - **Definition (:=)**: If you see a colon followed by equals, you MUST write ':='.\n"
+        "   - **Modulo (%)**: Literally transcribe as '%'. (e.g. $40 % 3 = 1$).\n"
+        "   - **Q.E.D.**: If you see a square box, write '\\blacksquare'.\n\n"
+        "5. **Formatting & Linearity (MANDATORY)**:\n"
+        "   - **STRICT LINEARITY**: If multiple equations or steps appear together on the same line or in a tight cluster, you MUST MERGE them into a single line in Markdown. Use commas to separate them. Example: '$x^2-4=0, (x-2)(x+2)=0, x=2, -2$'.\n"
+        "   - **NO BLOCK MATH**: Avoid using `$$ ... $$` for simple or medium steps. Stick to inline `$ ... $` to keep everything compact.\n"
+        "   - **No Conversational Text**: Do not add 'End.', 'Done', or 'Solution'.\n\n"
+        "6. **EXACT FORMAT EXAMPLE**:\n"
+        "# Problem 1\n\n"
+        "## a)\n"
+        "Proof:\n\n"
+        "> $a \\geq 0, b \\in \\mathbb{N}$\n\n\n"
+        "> $0 \\in \\mathbb{N} \\implies a \\in \\mathbb{N}$ $\\blacksquare$\n\n"
+        "## b)\n"
+        "$x^2 - 2x - 8 = 0, (x-4)(x+2)=0, x=4, -2$"
     )
 
     for i, img in enumerate(images):
@@ -111,9 +140,18 @@ def run_vision_ocr(pdf_path, api_key=None):
             chat_response = client.chat.complete(
                 model="pixtral-12b-2409", 
                 messages=messages,
-                temperature=0.1 # Low temp for factual transcription
+                temperature=0.1 
             )
             content = chat_response.choices[0].message.content
+            
+            # --- Post-Processing Fixes ---
+            # 1. Modulo/Percent Fix: Normalize escaping.
+            # Convert any existing \% back to % temporarily, then escape all % to \%.
+            # This handles both "%" -> "\%" and "\%" -> "\%".
+            content = content.replace("\\%", "%").replace("%", "\\%")
+            
+            # 2. Definition Fix: ": =" -> ":=" (VLM common whitespace error)
+            content = content.replace(": =", ":=")
             
             # Post-process: Strip markdown code fences if present
             if content.startswith("```"):
@@ -129,7 +167,6 @@ def run_vision_ocr(pdf_path, api_key=None):
             # FORCE User Requirements:
             # 1. Replace standard bullets '- ' or '* ' with '> '
             # 2. Add extra newlines for detected bullets
-            import re
             # Regex lookbehinds/aheads to find list items at start of line
             # Pattern: newline followed by - or * and space
             # We want to replace it with "\n\n\n> " to ensure the gap

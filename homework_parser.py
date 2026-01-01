@@ -19,10 +19,10 @@ class HomeworkParser:
         # Matches: "# Problem 1", "## Problem 1", or just "Problem 1" (robustness)
         self.problem_pattern = re.compile(r'^(?:#|##)?\s*Problem\s+(\d+)', re.IGNORECASE)
         
-        # Matches: "## a)" or "## b)" or "### a)"
-        self.part_pattern = re.compile(r'^(?:##|###)\s*([a-z]\))', re.IGNORECASE)
+        # Matches: "## a)" or "## b)" -- STRICTLY ## for Parts
+        self.part_pattern = re.compile(r'^##\s*([a-z]\))', re.IGNORECASE)
         
-        # Matches: "### i)", "### ii)", etc.
+        # Matches: "### i)", "### ii)", etc. -- STRICTLY ### for Subparts
         self.subpart_pattern = re.compile(r'^###\s*([ivx]+\))', re.IGNORECASE)
         
         # Proof Markers
@@ -33,7 +33,7 @@ class HomeworkParser:
         self.problems = []
         self.current_problem = None # Dict
         self.current_part = None    # Dict
-        self.in_proof = False
+        self.current_subpart = None # Dict
         
     def parse(self, markdown_string):
         """
@@ -42,7 +42,7 @@ class HomeworkParser:
         lines = markdown_string.split('\n')
         
         for line in lines:
-            line = line.rstrip() # Keep indentation if relevant, but typically strip right
+            line = line.rstrip() 
             self._process_line(line)
             
         # Final cleanup after loop
@@ -63,12 +63,14 @@ class HomeworkParser:
         # 1. Check for New Problem Header
         problem_match = self.problem_pattern.match(clean_line)
         if problem_match:
-            self._finalize_current_blocks() # Close existing part & problem
+            self._finalize_current_blocks() # Close everything
             
             problem_id = problem_match.group(1)
             self.current_problem = {
                 "problem_id": problem_id,
-                "parts": []
+                "content": "", # For "headless" problems (no parts)
+                "parts": [],
+                "_temp_lines": [] 
             }
             self.problems.append(self.current_problem)
             return
@@ -77,82 +79,88 @@ class HomeworkParser:
         # Only valid if we have an active problem
         part_match = self.part_pattern.match(clean_line)
         if part_match and self.current_problem is not None:
-            self._finalize_current_part() # Close existing part only
+            self._finalize_problem_content() # Finish problem content
+            self._finalize_current_part_and_subparts() # Close existing part & subparts
             
-            part_id = part_match.group(1).replace(')', '') # remove ')' for ID? User said "e.g. 'a'".
+            part_id = part_match.group(1).replace(')', '')
             
             self.current_part = {
                 "part_id": part_id,
                 "content": "",
-                "metadata": {
-                    "has_proof": False,
-                    "equation_count": 0
-                },
+                "subparts": [],
                 "_temp_lines": [] # Buffer for content
             }
             self.current_problem["parts"].append(self.current_part)
-            # Reset proof state for new part
-            self.in_proof = False
             return
             
-        # 3. Handle Content (if inside a part)
+        # 3. Check for Subpart Header (### i))
         if self.current_part is not None:
-            # Check for Proof Tags
-            if self.proof_start in clean_line:
-                self.current_part["metadata"]["has_proof"] = True
-                self.in_proof = True
-            
-            if self.proof_end in clean_line:
-                self.in_proof = False
+             subpart_match = self.subpart_pattern.match(clean_line)
+             if subpart_match:
+                self._finalize_current_subpart() # Close existing subpart
                 
-            # Count Equations (naive check for $ or $$)
-            # A line might have multiple '$', counting pairs roughly?
-            # Or just check if line contains math. 
-            # Prompt says: "equation_count (integer)".
-            # Let's count occurrence of separate math blocks.
-            # Simple heuristic: count occurrences of '$$' + pairs of '$'
-            # Actually, standard regex for extracting math might be better, but let's stick to simple line checks for now.
-            # We'll do a simple count of '$' and divide by 2? Or just 1 if present? 
-            # "equation_count" implies count of equations.
-            # I will count '$$' blocks and inline '$...$' separately.
-            # For efficiency, I'll just count '$' characters / 2.
-            self.current_part["metadata"]["equation_count"] += clean_line.count('$') // 2
-            
+                subpart_id = subpart_match.group(1).replace(')', '')
+                
+                self.current_subpart = {
+                    "subpart_id": subpart_id,
+                    "content": "",
+                    "_temp_lines": []
+                }
+                self.current_part["subparts"].append(self.current_subpart)
+                return
+
+        # 4. Handle Content Logic
+        # Priority: Subpart > Part > Problem
+        if self.current_subpart is not None:
+            self.current_subpart["_temp_lines"].append(line)
+        elif self.current_part is not None:
             self.current_part["_temp_lines"].append(line)
-            
-        # If text appears before any part (e.g. Intro to Problem 1), we could attach to problem?
-        # User schema only has parts. I will ignore orphan text in Problem or attach to last part.
-        # Strict schema: "parts: A list of objects". No content field on Problem.
-        # So I will ignore text that isn't inside a part.
+        elif self.current_problem is not None:
+            self.current_problem["_temp_lines"].append(line)
             
     def _finalize_current_blocks(self):
-        self._finalize_current_part()
+        self._finalize_problem_content()
+        self._finalize_current_part_and_subparts()
         self.current_problem = None
         
+    def _finalize_current_part_and_subparts(self):
+        self._finalize_current_subpart() # Close subpart first
+        self._finalize_current_part()    # Then close part
+        
+    def _finalize_current_subpart(self):
+        if self.current_subpart:
+            content_lines = self.current_subpart["_temp_lines"]
+            self.current_subpart["content"] = self._clean_content("\n".join(content_lines))
+            del self.current_subpart["_temp_lines"]
+            self.current_subpart = None
+
     def _finalize_current_part(self):
         if self.current_part:
             content_lines = self.current_part["_temp_lines"]
-            
-            # Sanitization Step 4: Auto-close proof if missing
-            # If we are strictly inside a proof (flag is true) and we are closing the part
-            if self.in_proof:
-               # Check if end tag is already in lines?
-               # The flag tracks state. If True at finalization, we are missing a closing tag.
-               content_lines.append(self.proof_end)
-               self.in_proof = False
-            
-            # Join and clean
-            raw_content = "\n".join(content_lines)
-            self.current_part["content"] = self._clean_content(raw_content)
-            
-            # Remove temp buffer
+            self.current_part["content"] = self._clean_content("\n".join(content_lines))
             del self.current_part["_temp_lines"]
-            
             self.current_part = None
+
+    def _finalize_problem_content(self):
+        if self.current_problem:
+            # Only process if we haven't already moved past problem content?
+            # Actually, _temp_lines stays with problem until finalized?
+            # But wait, once we are in a part, we shouldn't add to problem content.
+            # My logic in _process_line: 'elif self.current_problem'. So once part is active, problem content stops.
+            # So we can finalize problem content whenever we switch/close problem, 
+            # OR we can just finalize it at the end. Use a check to avoid double processing.
+            if "_temp_lines" in self.current_problem:
+                 content_lines = self.current_problem["_temp_lines"]
+                 # Append to existing content or set? usually sequential.
+                 if content_lines:
+                     new_content = self._clean_content("\n".join(content_lines))
+                     if self.current_problem["content"]:
+                         self.current_problem["content"] += "\n" + new_content
+                     else:
+                         self.current_problem["content"] = new_content
+                     
+                     # Clear lines so we don't re-add
+                     self.current_problem["_temp_lines"] = []
             
     def _clean_content(self, text):
-        """
-        Strip leading/trailing whitespace.
-        (Preserves internal LaTeX structure as we just joined unmodified lines)
-        """
         return text.strip()

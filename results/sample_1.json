@@ -1,0 +1,21 @@
+{
+    "problems": [
+        {
+            "problem_id": "1",
+            "content": "",
+            "parts": [
+                {
+                    "part_id": "a",
+                    "content": "Proof:\n\n> let $a = 0$ and arbitrary $b \\in \\mathbb{N}$\n>\n> $0 \\in \\mathbb{N}$, so $a \\in \\mathbb{N}$\n>\n> By definition of natural numbers, $0$ is the smallest natural number. Thus $a = 0$ is the smallest natural number. Thus the statement $a \\leq b$ holds true, since arbitrary $b$ can only be $\\geq 0$\n>\n> Thus $a \\leq b$ when $a = 0$, satisfying the condition $\\blacksquare$",
+                    "subparts": []
+                },
+                {
+                    "part_id": "b",
+                    "content": "$x^2 - 2x - 8 = 0, (x-4)(x+2) = 0, x = 4, -2$\n\nRoots Of Quadratic Equation: $4, -2$",
+                    "subparts": []
+                }
+            ],
+            "_temp_lines": []
+        }
+    ]
+}
