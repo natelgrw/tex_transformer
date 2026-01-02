@@ -1,4 +1,4 @@
-# TeX Transformer: Automated LaTeX Transcription
+# TeX Transformer: Automated PDF Transcription
 
 A Python pipeline converting handwritten notes in PDF format into valid, formatted LaTeX documents. Currently suitable for math homework transcriptions of one page.
 
