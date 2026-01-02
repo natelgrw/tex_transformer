@@ -1,6 +1,6 @@
 # TeX Transformer: Automated PDF Transcription
 
-A Python pipeline converting handwritten notes in PDF format into valid, formatted LaTeX documents. Currently suitable for math homework transcriptions of one page.
+A Python pipeline converting handwritten notes in PDF format into valid, formatted LaTeX documents. Currently suitable for simple math homework transcriptions of multiple pages.
 
 Current Version: **0.2.0**
 
