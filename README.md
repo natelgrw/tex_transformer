@@ -31,6 +31,6 @@ This pipeline combines `marker-pdf` for layout analysis with Mistral's VLM for s
 4. **Standard Run**:
     Run the pipeline on your target PDF. The script handles OCR, Parsing, and Generation automatically.
     ```bash
-    python main.py data/sample_1.pdf
+    python main.py data/sample_4.pdf
     ```
-    Output will be saved to `results/sample_1.pdf`.
+    Output will be saved to `results/sample_4.pdf`.
